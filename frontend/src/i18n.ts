@@ -1,0 +1,96 @@
+export type Lang = 'zh' | 'en'
+
+const translations = {
+  zh: {
+    title: '慢旅行规划助手',
+    subtitle: '疲劳感知的智能旅行路线规划',
+    originPlaceholder: '出发地点（可选），例如：西湖、火车站',
+    destinationPlaceholder: '目的地城市，例如：杭州、北京、成都',
+    startButton: '开始规划',
+    runningButton: '规划中...',
+    process: '执行过程',
+    finalItinerary: '最终行程',
+    totalDistance: '总步行距离',
+    meters: '米',
+    // Steps
+    plannerLabel: '景点规划',
+    calculatorLabel: '距离计算',
+    restStopLabel: '休息推荐',
+    foundSpot: '发现景点',
+    segmentDistance: '本段步行距离',
+    fatigueWarning: '累计距离超过阈值，需要休息！',
+    energyOk: '体力充沛，继续前进',
+    restRecommend: '推荐休息点',
+    // Settings
+    settings: '设置',
+    settingsTitle: 'API 配置',
+    amapKey: '高德地图 API Key',
+    amapKeyPlaceholder: '输入高德地图 API Key',
+    dashscopeKey: 'DashScope API Key（通义千问）',
+    dashscopeKeyPlaceholder: '输入 DashScope API Key',
+    llmModel: 'LLM 模型',
+    save: '保存',
+    saving: '保存中...',
+    saved: '保存成功',
+    cancel: '取消',
+    configured: '已配置',
+    notConfigured: '未配置',
+    // Errors
+    errorPrefix: '错误',
+    configError: '请先在设置中配置 API Key',
+    networkError: '网络连接失败，请检查网络',
+    timeoutError: '请求超时，请稍后重试',
+    unknownError: '规划失败，请重试',
+    retryButton: '重试',
+    goToSettings: '去设置',
+  },
+  en: {
+    title: 'Slow Travel Planner',
+    subtitle: 'Fatigue-aware intelligent travel route planning',
+    originPlaceholder: 'Starting point (optional), e.g. West Lake, Train Station',
+    destinationPlaceholder: 'Destination city, e.g. Hangzhou, Beijing, Chengdu',
+    startButton: 'Start Planning',
+    runningButton: 'Planning...',
+    process: 'Execution Process',
+    finalItinerary: 'Final Itinerary',
+    totalDistance: 'Total Walking Distance',
+    meters: 'm',
+    // Steps
+    plannerLabel: 'Spot Planning',
+    calculatorLabel: 'Distance Calculation',
+    restStopLabel: 'Rest Recommendation',
+    foundSpot: 'Found spot',
+    segmentDistance: 'Walking distance',
+    fatigueWarning: 'Cumulative distance exceeded threshold, rest needed!',
+    energyOk: 'Energy level good, keep going',
+    restRecommend: 'Recommended rest stop',
+    // Settings
+    settings: 'Settings',
+    settingsTitle: 'API Configuration',
+    amapKey: 'AMap API Key',
+    amapKeyPlaceholder: 'Enter AMap API Key',
+    dashscopeKey: 'DashScope API Key (Qwen)',
+    dashscopeKeyPlaceholder: 'Enter DashScope API Key',
+    llmModel: 'LLM Model',
+    save: 'Save',
+    saving: 'Saving...',
+    saved: 'Saved',
+    cancel: 'Cancel',
+    configured: 'Configured',
+    notConfigured: 'Not configured',
+    // Errors
+    errorPrefix: 'Error',
+    configError: 'Please configure API keys in Settings first',
+    networkError: 'Network connection failed, please check your connection',
+    timeoutError: 'Request timed out, please try again later',
+    unknownError: 'Planning failed, please retry',
+    retryButton: 'Retry',
+    goToSettings: 'Go to Settings',
+  },
+} as const
+
+export type TranslationKey = keyof typeof translations.zh
+
+export function t(lang: Lang, key: TranslationKey): string {
+  return translations[lang][key]
+}

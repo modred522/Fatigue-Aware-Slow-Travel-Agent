@@ -4,64 +4,75 @@ from typing import TypedDict, Annotated, List
 from dotenv import load_dotenv, find_dotenv
 from langchain_community.chat_models import ChatTongyi
 from langgraph.graph import StateGraph, END
-from tools import calculate_walking_distance 
+from tools import calculate_walking_distance
 
 # Load environment variables
 _ = load_dotenv(find_dotenv(), override=True)
 
-# Initialize the LLM (The Brain)
-llm = ChatTongyi(model="qwen-turbo")
+
+def get_llm():
+    """Get LLM instance based on current environment config."""
+    model = os.getenv("LLM_MODEL", "qwen-turbo")
+    return ChatTongyi(model=model)
+
 
 # 1. Define the complete TravelState
 class TravelState(TypedDict):
     destination: str
+    origin: str
     # Use operator.add to append new spots to the list instead of overwriting
-    itinerary: Annotated[List[str], operator.add] 
+    itinerary: Annotated[List[str], operator.add]
     # Use operator.add to accumulate the total walking distance
-    cumulative_distance: Annotated[int, operator.add] 
-    current_location: str 
-    needs_rest: bool 
+    cumulative_distance: Annotated[int, operator.add]
+    current_location: str
+    needs_rest: bool
 
 # 2. Node A: The Planner
 def select_next_spot(state: TravelState):
     print("\n--- [Node: Planner] Thinking about the next destination ---")
-    
-    # If the itinerary is empty, pick the first scenic spot
+    llm = get_llm()
+
+    # If the itinerary is empty, pick the first scenic spot near the origin
     if not state["itinerary"]:
-        prompt = f"The user is planning a slow travel trip to {state['destination']}. Recommend ONE famous starting scenic spot. Output only the exact name of the spot, nothing else."
+        origin = state.get("origin", "")
+        if origin:
+            prompt = f"The user is starting a slow travel trip in {state['destination']} from '{origin}'. Recommend ONE famous scenic spot near this starting point. Output only the exact name of the spot, nothing else."
+        else:
+            prompt = f"The user is planning a slow travel trip to {state['destination']}. Recommend ONE famous starting scenic spot. Output only the exact name of the spot, nothing else."
         response = llm.invoke(prompt)
         first_spot = response.content.strip()
         print(f"🧠 Selected starting point: {first_spot}")
-        
+
         # Return state updates: add spot to itinerary and set current location
         return {"itinerary": [first_spot], "current_location": first_spot}
-    
+
     # If already traveling, pick the next spot based on the current location
     current = state["current_location"]
     prompt = f"The user is currently at '{current}' in {state['destination']}. Recommend ONE nearby scenic spot suitable for a relaxing walk. Output only the exact name of the spot, nothing else."
     response = llm.invoke(prompt)
     next_spot = response.content.strip()
     print(f"🧠 Selected next stop: {next_spot}")
-    
+
     return {"itinerary": [next_spot]}
 
 # 3. Node B: The Fatigue Calculator (Integrates the Amap Tool)
 def calculate_fatigue(state: TravelState):
     print("\n--- [Node: Calculator] Checking physical exertion ---")
-    
+
     # If there is only one spot, the user hasn't started walking yet
     if len(state["itinerary"]) < 2:
          return {"cumulative_distance": 0, "needs_rest": False}
-         
+
     # The newly added spot is the destination, the previous location is the origin
     destination_spot = state["itinerary"][-1]
-    origin_spot = state["current_location"] 
-    
+    origin_spot = state["current_location"]
+
     try:
         # Invoke the Amap tool to get real-world distance
         distance = calculate_walking_distance.invoke({
             "origin_name": origin_spot,
-            "destination_name": destination_spot
+            "destination_name": destination_spot,
+            "city": state["destination"]
         })
     except Exception as e:
         print(f"⚠️ Tool execution failed, defaulting to 1000m. Error: {e}")
@@ -70,7 +81,7 @@ def calculate_fatigue(state: TravelState):
     # Fatigue logic: Check if the threshold (e.g., 3000 meters) is exceeded
     total_after_this_walk = state["cumulative_distance"] + distance
     needs_rest = total_after_this_walk > 3000
-    
+
     if needs_rest:
         print(f"🔴 WARNING! Total distance reached {total_after_this_walk}m. Rest required!")
     else:
@@ -87,23 +98,24 @@ def calculate_fatigue(state: TravelState):
 def route_logic(state: TravelState):
     # If fatigue threshold is met, route to the rest stop node
     if state["needs_rest"]:
-        return "rest_node" 
+        return "rest_node"
     # If we have successfully planned 3 spots without exhaustion, finish the trip
     elif len(state["itinerary"]) >= 3:
-        return "end" 
+        return "end"
     # Otherwise, loop back to the planner for the next spot
     else:
-        return "continue" 
+        return "continue"
 
 # 5. Node C: The Rest Stop Finder
 def find_rest_stop(state: TravelState):
     print("\n--- [Node: Rest Stop] Finding a place to relax ---")
+    llm = get_llm()
     current = state["current_location"]
     prompt = f"The user is exhausted near '{current}' in {state['destination']}. Recommend ONE highly-rated cafe or teahouse nearby for resting. Output only the exact name of the shop, nothing else."
     response = llm.invoke(prompt)
     cafe = response.content.strip()
     print(f"☕ Found a rest stop: {cafe}")
-    
+
     return {"itinerary": [f"[Rest Stop] {cafe}"]}
 
 # ==========================================
@@ -143,16 +155,17 @@ app = workflow.compile()
 if __name__ == "__main__":
     # Initialize the starting state
     initial_state = {
-        "destination": "杭州", 
+        "destination": "杭州",
+        "origin": "",
         "itinerary": [],
         "cumulative_distance": 0,
         "current_location": "",
         "needs_rest": False
     }
-    
+
     print("🚀 Starting the Fatigue-Aware Slow Travel Agent...")
     final_state = app.invoke(initial_state)
-    
+
     print("\n===============================")
     print("🏁 Final Itinerary:")
     for i, spot in enumerate(final_state["itinerary"]):
