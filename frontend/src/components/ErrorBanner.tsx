@@ -1,6 +1,6 @@
-import type { ErrorInfo } from '../types'
 import type { Lang } from '../i18n'
 import { t } from '../i18n'
+import type { ErrorInfo } from '../types'
 
 interface Props {
   error: ErrorInfo
@@ -10,24 +10,28 @@ interface Props {
 }
 
 export default function ErrorBanner({ error, lang, onRetry, onOpenSettings }: Props) {
-  const isConfigError = error.type === 'config_error' || error.type === 'api_key_error'
+  const needsSettings = error.field === 'amap_api_key' || error.field === 'dashscope_api_key'
+  const isDistanceLimit = error.type === 'distance_limit_error'
 
   return (
-    <div className={`error-banner error-${error.type}`}>
-      <div className="error-content">
-        <div className="error-type">{t(lang, 'errorPrefix')}</div>
-        <div className="error-message">{error.message}</div>
+    <section className="error-banner">
+      <div>
+        <p className="error-title">{t(lang, 'errorPrefix')}</p>
+        <p className="error-message">{error.message}</p>
+        {isDistanceLimit && (
+          <p className="error-hint">{t(lang, 'distanceLimitHint')}</p>
+        )}
       </div>
       <div className="error-actions">
-        {isConfigError && (
-          <button className="btn-link" onClick={onOpenSettings}>
-            ⚙️ {t(lang, 'goToSettings')}
+        {needsSettings && (
+          <button className="ghost-button" type="button" onClick={onOpenSettings}>
+            {t(lang, 'openSettings')}
           </button>
         )}
-        <button className="btn-link" onClick={onRetry}>
-          🔄 {t(lang, 'retryButton')}
+        <button className="primary-button subtle" type="button" onClick={onRetry}>
+          {t(lang, 'retry')}
         </button>
       </div>
-    </div>
+    </section>
   )
 }

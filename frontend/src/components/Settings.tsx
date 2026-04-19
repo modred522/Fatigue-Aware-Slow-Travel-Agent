@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
+
 import type { Lang } from '../i18n'
 import { t } from '../i18n'
-import type { SettingsData } from '../types'
+import { fetchModelOptions, fetchSettings, saveSettings } from '../lib/api'
+import type { ModelOption, SettingsData } from '../types'
 
 interface Props {
   open: boolean
@@ -9,63 +11,75 @@ interface Props {
   lang: Lang
 }
 
-const MODEL_OPTIONS = [
-  'qwen-turbo',
-  'qwen-plus',
-  'qwen-max',
-]
-
 export default function Settings({ open, onClose, lang }: Props) {
   const [settings, setSettings] = useState<SettingsData | null>(null)
   const [amapKey, setAmapKey] = useState('')
-  const [dashscopeKey, setDashscopeKey] = useState('')
+  const [llmApiKey, setLlmApiKey] = useState('')
+  const [llmBaseUrl, setLlmBaseUrl] = useState('')
   const [llmModel, setLlmModel] = useState('qwen-turbo')
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
-  const [error, setError] = useState('')
+  const [llmTemperature, setLlmTemperature] = useState(0.3)
+  const [modelOptions, setModelOptions] = useState<ModelOption[]>([])
+  const [saving, setSaving] = useState(false)
+  const [fetchingModels, setFetchingModels] = useState(false)
+  const [message, setMessage] = useState('')
 
   useEffect(() => {
-    if (open) {
-      fetch('/api/settings')
-        .then((r) => r.json())
-        .then((data: SettingsData) => {
-          setSettings(data)
-          setLlmModel(data.llm_model)
-          setAmapKey('')
-          setDashscopeKey('')
-          setError('')
-          setSaveStatus('idle')
-        })
-        .catch(() => setError('Failed to load settings'))
-    }
+    if (!open) return
+    void fetchSettings()
+      .then((data) => {
+        setSettings(data)
+        setLlmModel(data.llm_model)
+        setLlmTemperature(data.llm_temperature ?? 0.3)
+        setAmapKey('')
+        setLlmApiKey('')
+        setLlmBaseUrl(data.llm_base_url)
+        setModelOptions(data.llm_model ? [{ id: data.llm_model }] : [])
+        setMessage('')
+      })
+      .catch(() => setMessage('Failed to load settings'))
   }, [open])
 
   if (!open) return null
 
-  const handleSave = async () => {
-    setSaveStatus('saving')
-    setError('')
+  const handleFetchModels = async () => {
+    setFetchingModels(true)
+    setMessage('')
     try {
-      const payload: Record<string, string> = {}
-      if (amapKey) payload.amap_api_key = amapKey
-      if (dashscopeKey) payload.dashscope_api_key = dashscopeKey
-      payload.llm_model = llmModel
-
-      const res = await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+      const models = await fetchModelOptions({
+        llm_api_key: llmApiKey.trim() || settings?.llm_api_key || '',
+        llm_base_url: llmBaseUrl.trim() || settings?.llm_base_url || '',
       })
-      if (!res.ok) throw new Error('Save failed')
-      setSaveStatus('saved')
-      // Refresh settings display
-      const updated = await fetch('/api/settings').then((r) => r.json())
-      setSettings(updated)
-      setAmapKey('')
-      setDashscopeKey('')
-      setTimeout(() => setSaveStatus('idle'), 2000)
+      setModelOptions(models)
+      if (models.length && !models.some((item) => item.id === llmModel)) {
+        setLlmModel(models[0].id)
+      }
+      setMessage(t(lang, 'modelsFetched'))
     } catch {
-      setError('Failed to save settings')
-      setSaveStatus('idle')
+      setMessage('Failed to fetch models')
+    } finally {
+      setFetchingModels(false)
+    }
+  }
+
+  const handleSave = async () => {
+    setSaving(true)
+    setMessage('')
+    try {
+      const payload: Record<string, string> = { llm_model: llmModel, llm_temperature: String(llmTemperature) }
+      if (amapKey.trim()) payload.amap_api_key = amapKey.trim()
+      if (llmApiKey.trim()) payload.llm_api_key = llmApiKey.trim()
+      payload.llm_base_url = llmBaseUrl.trim()
+      await saveSettings(payload)
+      const latest = await fetchSettings()
+      setSettings(latest)
+      setAmapKey('')
+      setLlmApiKey('')
+      setLlmBaseUrl(latest.llm_base_url)
+      setMessage(t(lang, 'saved'))
+    } catch {
+      setMessage('Failed to save settings')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -73,64 +87,84 @@ export default function Settings({ open, onClose, lang }: Props) {
     <div className="settings-overlay" onClick={onClose}>
       <div className="settings-panel" onClick={(e) => e.stopPropagation()}>
         <div className="settings-header">
-          <h2>{t(lang, 'settingsTitle')}</h2>
-          <button className="close-btn" onClick={onClose}>✕</button>
+          <div>
+            <p className="eyebrow">{t(lang, 'settings')}</p>
+            <h2>{t(lang, 'settingsTitle')}</h2>
+          </div>
+          <button className="close-button" type="button" onClick={onClose}>
+            x
+          </button>
         </div>
 
         <div className="settings-body">
-          {/* AMap API Key */}
-          <div className="setting-group">
-            <label>{t(lang, 'amapKey')}</label>
-            <div className="setting-status">
-              {settings?.amap_api_key_set ? (
-                <span className="status-badge configured">{t(lang, 'configured')}: {settings.amap_api_key}</span>
-              ) : (
-                <span className="status-badge not-configured">{t(lang, 'notConfigured')}</span>
-              )}
-            </div>
+          <label className="field">
+            <span>{t(lang, 'amapKey')}</span>
+            <small>{settings?.amap_api_key_set ? `${t(lang, 'configured')}: ${settings.amap_api_key}` : t(lang, 'notConfigured')}</small>
             <input
-              type="text"
               value={amapKey}
               onChange={(e) => setAmapKey(e.target.value)}
               placeholder={t(lang, 'amapKeyPlaceholder')}
             />
-          </div>
+          </label>
 
-          {/* DashScope API Key */}
-          <div className="setting-group">
-            <label>{t(lang, 'dashscopeKey')}</label>
-            <div className="setting-status">
-              {settings?.dashscope_api_key_set ? (
-                <span className="status-badge configured">{t(lang, 'configured')}: {settings.dashscope_api_key}</span>
-              ) : (
-                <span className="status-badge not-configured">{t(lang, 'notConfigured')}</span>
-              )}
-            </div>
+          <label className="field">
+            <span>{t(lang, 'llmApiKey')}</span>
+            <small>{settings?.llm_api_key_set ? `${t(lang, 'configured')}: ${settings.llm_api_key}` : t(lang, 'notConfigured')}</small>
             <input
-              type="text"
-              value={dashscopeKey}
-              onChange={(e) => setDashscopeKey(e.target.value)}
-              placeholder={t(lang, 'dashscopeKeyPlaceholder')}
+              value={llmApiKey}
+              onChange={(e) => setLlmApiKey(e.target.value)}
+              placeholder={t(lang, 'llmApiKeyPlaceholder')}
             />
-          </div>
+          </label>
 
-          {/* LLM Model */}
-          <div className="setting-group">
-            <label>{t(lang, 'llmModel')}</label>
+          <label className="field">
+            <span>{t(lang, 'llmBaseUrl')}</span>
+            <small>{t(lang, 'modelHelp')}</small>
+            <input
+              value={llmBaseUrl}
+              onChange={(e) => setLlmBaseUrl(e.target.value)}
+              placeholder={t(lang, 'llmBaseUrlPlaceholder')}
+            />
+          </label>
+
+          <label className="field">
+            <span>{t(lang, 'llmModel')}</span>
+            <div className="settings-inline-actions">
+              <button className="ghost-button" type="button" onClick={handleFetchModels} disabled={fetchingModels}>
+                {fetchingModels ? t(lang, 'fetchingModels') : t(lang, 'fetchModels')}
+              </button>
+            </div>
             <select value={llmModel} onChange={(e) => setLlmModel(e.target.value)}>
-              {MODEL_OPTIONS.map((m) => (
-                <option key={m} value={m}>{m}</option>
+              {modelOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.id}
+                </option>
               ))}
             </select>
-          </div>
+          </label>
 
-          {error && <div className="settings-error">{error}</div>}
+          <label className="field">
+            <span>{t(lang, 'llmTemperature')}</span>
+            <small>{t(lang, 'llmTemperatureHelp')}</small>
+            <input
+              type="number"
+              min={0}
+              max={2}
+              step={0.1}
+              value={llmTemperature}
+              onChange={(e) => setLlmTemperature(Number(e.target.value))}
+            />
+          </label>
+
+          {message && <p className="settings-message">{message}</p>}
         </div>
 
         <div className="settings-footer">
-          <button className="btn-secondary" onClick={onClose}>{t(lang, 'cancel')}</button>
-          <button className="btn-primary" onClick={handleSave} disabled={saveStatus === 'saving'}>
-            {saveStatus === 'saving' ? t(lang, 'saving') : saveStatus === 'saved' ? `✓ ${t(lang, 'saved')}` : t(lang, 'save')}
+          <button className="ghost-button" type="button" onClick={onClose}>
+            {t(lang, 'cancel')}
+          </button>
+          <button className="primary-button" type="button" onClick={handleSave} disabled={saving}>
+            {saving ? t(lang, 'saving') : t(lang, 'save')}
           </button>
         </div>
       </div>

@@ -4,9 +4,26 @@
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
 body {
   margin: 0;
-  background: #ffffff;
+  font-family: "Space Grotesk", "Noto Sans SC", "Segoe UI", sans-serif;
+  color: #1f1a17;
+  background:
+    radial-gradient(circle at top left, rgba(223, 159, 61, 0.12), transparent 26%),
+    radial-gradient(circle at top right, rgba(31, 143, 122, 0.10), transparent 24%),
+    linear-gradient(180deg, #f7f3eb 0%, #f0eadf 100%);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+input,
+select {
+  font: inherit;
 }
