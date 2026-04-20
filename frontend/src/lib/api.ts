@@ -4,6 +4,7 @@ import type {
   LocationValidationRequest,
   LocationValidationResponse,
   ModelOption,
+  MapSettings,
   PlanRequest,
   SettingsData,
   StreamEvent,
@@ -18,6 +19,14 @@ export async function fetchSettings(): Promise<SettingsData> {
   const response = await fetch('/api/settings')
   if (!response.ok) {
     throw new Error('Failed to load settings')
+  }
+  return response.json()
+}
+
+export async function fetchMapSettings(): Promise<MapSettings> {
+  const response = await fetch('/api/settings/map')
+  if (!response.ok) {
+    throw new Error('Failed to load map settings')
   }
   return response.json()
 }

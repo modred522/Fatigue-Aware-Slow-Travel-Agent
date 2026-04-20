@@ -80,6 +80,12 @@ export interface ItineraryItem {
   reason: string
   confirmed: boolean
   transport_mode?: TransportMode
+  location_coords?: string | null
+}
+
+export interface MapSettings {
+  amap_api_key: string
+  amap_api_key_set: boolean
 }
 
 export interface TravelSummary {

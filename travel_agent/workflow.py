@@ -39,9 +39,19 @@ class TravelState(TypedDict):
     next_target_index: int
     itinerary_items: list[dict[str, Any]]
     cumulative_distance_meters: int
+    total_distance_meters: int
     current_segment_distance_meters: int
     needs_rest: bool
     rest_stop_count: int  # Track rest stops to prevent infinite loops
+    replan_required: bool
+    distance_replan_count: int
+    distance_guard_exhausted: bool
+    fallback_attempted: bool
+    pending_destination_item: dict[str, Any] | None
+    pending_remaining_distance_meters: int
+    pending_full_segment_distance_meters: int
+    pending_midpoint_coords: str
+    rejected_spot_names: list[str]
     event_log: list[dict[str, Any]]
     emitted_events: list[dict[str, Any]]
     summary: dict[str, Any] | None
@@ -67,6 +77,7 @@ def build_initial_state(request: PlanRequest) -> TravelState:
             cumulative_distance_meters=0,
             reason="Trip origin set by the traveler.",
             confirmed=True,
+            location_coords=_safe_geocode_coords(request.origin, city),
         )
         itinerary_items.append(origin_item.model_dump())
         for waypoint in request.selected_waypoints:
@@ -107,9 +118,19 @@ def build_initial_state(request: PlanRequest) -> TravelState:
         "next_target_index": 0,
         "itinerary_items": itinerary_items,
         "cumulative_distance_meters": 0,
+        "total_distance_meters": 0,
         "current_segment_distance_meters": 0,
         "needs_rest": False,
         "rest_stop_count": 0,
+        "replan_required": False,
+        "distance_replan_count": 0,
+        "distance_guard_exhausted": False,
+        "fallback_attempted": False,
+        "pending_destination_item": None,
+        "pending_remaining_distance_meters": 0,
+        "pending_full_segment_distance_meters": 0,
+        "pending_midpoint_coords": "",
+        "rejected_spot_names": [],
         "event_log": [],
         "emitted_events": [],
         "summary": None,
@@ -129,12 +150,36 @@ def _spot_count(state: TravelState) -> int:
     )
 
 
+def _safe_geocode_coords(name: str, city: str) -> str | None:
+    try:
+        return AMapClient().geocode(name, city)
+    except ExternalServiceError:
+        return None
+
+
+def _max_segment_distance_meters(state: TravelState) -> int:
+    """Per-hop budget derived from fatigue threshold.
+
+    Rule: a traveler can rest once between two POIs, so the distance between
+    neighboring POIs should stay within roughly two fatigue thresholds.
+    """
+    threshold = state["fatigue_threshold_meters"]
+    return max(1200, threshold * 2)
+
+
+def _midpoint_coords(origin_coords: str, destination_coords: str) -> str:
+    origin_lng, origin_lat = [float(value) for value in origin_coords.split(",")]
+    destination_lng, destination_lat = [float(value) for value in destination_coords.split(",")]
+    return f"{(origin_lng + destination_lng) / 2:.6f},{(origin_lat + destination_lat) / 2:.6f}"
+
+
 def planner_node(state: TravelState) -> dict[str, Any]:
     itinerary = [*state["itinerary_items"]]
     sequence = len(itinerary) + 1
 
     if state["mode"] == PlanningMode.LOCAL_EXPLORE.value:
         existing_names = [item["name"] for item in itinerary]
+        max_segment_distance = _max_segment_distance_meters(state)
         payload = extract_json(
             invoke_text(
                 build_local_spot_prompt(
@@ -142,6 +187,8 @@ def planner_node(state: TravelState) -> dict[str, Any]:
                     anchor_location=state["anchor_location"],
                     interests=state["interests"],
                     existing_names=existing_names,
+                    rejected_names=state.get("rejected_spot_names", []),
+                    max_segment_distance_meters=max_segment_distance,
                 )
             )
         )
@@ -155,6 +202,7 @@ def planner_node(state: TravelState) -> dict[str, Any]:
             cumulative_distance_meters=state["cumulative_distance_meters"],
             reason=payload["reason"],
             confirmed=False,
+            location_coords=None,
         )
     else:
         target = state["route_targets"][state["next_target_index"]]
@@ -168,6 +216,7 @@ def planner_node(state: TravelState) -> dict[str, Any]:
             cumulative_distance_meters=state["cumulative_distance_meters"],
             reason=target["reason"],
             confirmed=True,
+            location_coords=None,
         )
 
     itinerary.append(item.model_dump())
@@ -186,6 +235,9 @@ def planner_node(state: TravelState) -> dict[str, Any]:
     }
     if state["mode"] == PlanningMode.POINT_TO_POINT.value:
         updates["next_target_index"] = state["next_target_index"] + 1
+    else:
+        updates["replan_required"] = False
+        updates["distance_guard_exhausted"] = False
     return updates
 
 
@@ -220,10 +272,77 @@ def distance_calculator_node(state: TravelState) -> dict[str, Any]:
             f"Error: {e}"
         ) from e
     distance = route["distance_meters"]
+    max_segment_distance = _max_segment_distance_meters(state)
+    fatigue_threshold = state["fatigue_threshold_meters"]
+
+    if distance > fatigue_threshold and distance <= max_segment_distance:
+        itinerary.pop()
+        latest["location_coords"] = route["destination_coords"]
+        midpoint_coords = _midpoint_coords(route["origin_coords"], route["destination_coords"])
+        remaining_distance = max(0, distance - fatigue_threshold)
+        event_log, emitted_events = _append_event(
+            state,
+            BusinessEvent(
+                event="mid_segment_rest_required",
+                payload={
+                    "from": origin_name,
+                    "to": destination_name,
+                    "segment_distance_meters": distance,
+                    "fatigue_threshold_meters": fatigue_threshold,
+                    "remaining_distance_meters": remaining_distance,
+                },
+            ),
+        )
+        return {
+            "itinerary_items": itinerary,
+            "current_segment_distance_meters": 0,
+            "pending_destination_item": latest,
+            "pending_remaining_distance_meters": remaining_distance,
+            "pending_full_segment_distance_meters": distance,
+            "pending_midpoint_coords": midpoint_coords,
+            "event_log": event_log,
+            "emitted_events": emitted_events,
+        }
+
+    if state["mode"] == PlanningMode.LOCAL_EXPLORE.value and distance > max_segment_distance:
+        retry_count = state.get("distance_replan_count", 0) + 1
+        itinerary.pop()
+        rejected = [*state.get("rejected_spot_names", [])]
+        if destination_name not in rejected:
+            rejected.append(destination_name)
+        event_log, emitted_events = _append_event(
+            state,
+            BusinessEvent(
+                event="itinerary_item_rejected",
+                payload={
+                    "name": destination_name,
+                    "reason": "too_far_from_anchor",
+                    "segment_distance_meters": distance,
+                    "max_segment_distance_meters": max_segment_distance,
+                    "distance_policy": "single_rest_reachable_within_two_thresholds",
+                    "retry_count": retry_count,
+                    "exhausted": retry_count >= 3,
+                },
+            ),
+        )
+        exhausted = retry_count >= 3
+        return {
+            "itinerary_items": itinerary,
+            "current_segment_distance_meters": 0,
+            "replan_required": not exhausted,
+            "distance_replan_count": retry_count,
+            "distance_guard_exhausted": exhausted,
+            "rejected_spot_names": rejected,
+            "event_log": event_log,
+            "emitted_events": emitted_events,
+        }
+
     cumulative = state["cumulative_distance_meters"] + distance
+    total = state["total_distance_meters"] + distance
     latest["distance_from_previous_meters"] = distance
     latest["cumulative_distance_meters"] = cumulative
     latest["transport_mode"] = transport_mode
+    latest["location_coords"] = route["destination_coords"]
     itinerary[-1] = latest
 
     event_log, emitted_events = _append_event(
@@ -236,6 +355,7 @@ def distance_calculator_node(state: TravelState) -> dict[str, Any]:
                 "to": destination_name,
                 "segment_distance_meters": distance,
                 "cumulative_distance_meters": cumulative,
+                "total_distance_meters": total,
                 "transport_mode": transport_mode,
             },
         ),
@@ -246,6 +366,14 @@ def distance_calculator_node(state: TravelState) -> dict[str, Any]:
         "anchor_location": destination_name,
         "current_segment_distance_meters": distance,
         "cumulative_distance_meters": cumulative,
+        "total_distance_meters": total,
+        "replan_required": False,
+        "distance_replan_count": 0,
+        "distance_guard_exhausted": False,
+        "pending_destination_item": None,
+        "pending_remaining_distance_meters": 0,
+        "pending_full_segment_distance_meters": 0,
+        "pending_midpoint_coords": "",
         "event_log": event_log,
         "emitted_events": emitted_events,
     }
@@ -256,6 +384,7 @@ def fatigue_router_node(state: TravelState) -> dict[str, Any]:
     payload = {
         "needs_rest": needs_rest,
         "cumulative_distance_meters": state["cumulative_distance_meters"],
+        "total_distance_meters": state["total_distance_meters"],
         "fatigue_threshold_meters": state["fatigue_threshold_meters"],
         "segment_distance_meters": state["current_segment_distance_meters"],
     }
@@ -282,6 +411,7 @@ def rest_stop_finder_node(state: TravelState) -> dict[str, Any]:
         cumulative_distance_meters=state["cumulative_distance_meters"],
         reason=payload["reason"],
         confirmed=False,
+        location_coords=_safe_geocode_coords(payload["name"], state["destination"]),
     )
     itinerary.append(item.model_dump())
     event_log, emitted_events = _append_event(
@@ -300,8 +430,213 @@ def rest_stop_finder_node(state: TravelState) -> dict[str, Any]:
     return {
         "itinerary_items": itinerary,
         "cumulative_distance_meters": 0,
+        "current_segment_distance_meters": 0,
         "needs_rest": False,
         "rest_stop_count": rest_stop_count,
+        "replan_required": False,
+        "distance_replan_count": 0,
+        "distance_guard_exhausted": False,
+        "event_log": event_log,
+        "emitted_events": emitted_events,
+    }
+
+
+def mid_segment_rest_node(state: TravelState) -> dict[str, Any]:
+    itinerary = [*state["itinerary_items"]]
+    sequence = len(itinerary) + 1
+    anchor = state["anchor_location"]
+    city = state.get("city", state["destination"])
+    fatigue_threshold = state["fatigue_threshold_meters"]
+    pending_item = state.get("pending_destination_item")
+    midpoint_coords = state.get("pending_midpoint_coords", "")
+    excluded = {*(item["name"] for item in itinerary)}
+
+    nearby = AMapClient().nearby_pois_by_location(
+        location_coords=midpoint_coords,
+        city=city,
+        radius_meters=max(300, fatigue_threshold // 2),
+        limit=12,
+    )
+    candidate = next((poi for poi in nearby if poi["name"] not in excluded), None)
+
+    if candidate is None:
+        nearby_destination = AMapClient().nearby_pois(
+            anchor_name=str(pending_item["name"]),
+            city=city,
+            radius_meters=max(300, fatigue_threshold // 2),
+            limit=8,
+        )
+        candidate = next((poi for poi in nearby_destination if poi["name"] not in excluded), None)
+
+    if candidate is None:
+        event_log, emitted_events = _append_event(
+            state,
+            BusinessEvent(
+                event="fallback_spot_failed",
+                payload={
+                    "anchor_location": anchor,
+                    "reason": "no_mid_segment_rest_stop_found",
+                    "max_segment_distance_meters": fatigue_threshold,
+                },
+            ),
+        )
+        return {
+            "distance_guard_exhausted": True,
+            "event_log": event_log,
+            "emitted_events": emitted_events,
+        }
+
+    item = ItineraryItem(
+        id=f"rest-midway-{slugify(candidate['name'])}-{sequence}",
+        name=candidate["name"],
+        kind=ItineraryItemKind.REST_STOP,
+        sequence=sequence,
+        anchor_segment=anchor,
+        distance_from_previous_meters=fatigue_threshold,
+        cumulative_distance_meters=fatigue_threshold,
+        reason=f"Mid-route rest before continuing to {pending_item['name']}.",
+        confirmed=True,
+        location_coords=candidate.get("location_coords"),
+    )
+    itinerary.append(item.model_dump())
+    total_after_rest = state["total_distance_meters"] + fatigue_threshold
+
+    event_log, emitted_events = _append_event(
+        state,
+        BusinessEvent(
+            event="rest_stop_added",
+            payload={
+                "item": item.model_dump(),
+                "cumulative_distance_meters": fatigue_threshold,
+                "rest_kind": "mid_segment",
+            },
+        ),
+    )
+    return {
+        "itinerary_items": itinerary,
+        "total_distance_meters": total_after_rest,
+        "cumulative_distance_meters": 0,
+        "current_segment_distance_meters": 0,
+        "needs_rest": False,
+        "rest_stop_count": state.get("rest_stop_count", 0) + 1,
+        "event_log": event_log,
+        "emitted_events": emitted_events,
+    }
+
+
+def complete_pending_segment_node(state: TravelState) -> dict[str, Any]:
+    itinerary = [*state["itinerary_items"]]
+    pending_item = dict(state["pending_destination_item"])
+    remaining_distance = state.get("pending_remaining_distance_meters", 0)
+    total = state["total_distance_meters"] + remaining_distance
+
+    pending_item["sequence"] = len(itinerary) + 1
+    pending_item["distance_from_previous_meters"] = remaining_distance
+    pending_item["cumulative_distance_meters"] = remaining_distance
+    pending_item["transport_mode"] = state.get("transport_mode", "walking")
+    itinerary.append(pending_item)
+
+    event_log, emitted_events = _append_event(
+        state,
+        BusinessEvent(
+            event="segment_distance_updated",
+            payload={
+                "item_id": pending_item["id"],
+                "from": itinerary[-2]["name"] if len(itinerary) > 1 else state["anchor_location"],
+                "to": pending_item["name"],
+                "segment_distance_meters": remaining_distance,
+                "cumulative_distance_meters": remaining_distance,
+                "total_distance_meters": total,
+                "transport_mode": state.get("transport_mode", "walking"),
+            },
+        ),
+    )
+
+    return {
+        "itinerary_items": itinerary,
+        "anchor_location": pending_item["name"],
+        "current_segment_distance_meters": remaining_distance,
+        "cumulative_distance_meters": remaining_distance,
+        "total_distance_meters": total,
+        "pending_destination_item": None,
+        "pending_remaining_distance_meters": 0,
+        "pending_full_segment_distance_meters": 0,
+        "pending_midpoint_coords": "",
+        "event_log": event_log,
+        "emitted_events": emitted_events,
+    }
+
+
+def fallback_local_spot_node(state: TravelState) -> dict[str, Any]:
+    itinerary = [*state["itinerary_items"]]
+    sequence = len(itinerary) + 1
+    anchor = state["anchor_location"]
+    city = state.get("city", state["destination"])
+    max_segment_distance = _max_segment_distance_meters(state)
+    excluded = {
+        *(item["name"] for item in itinerary),
+        *state.get("rejected_spot_names", []),
+    }
+
+    nearby = AMapClient().nearby_pois(
+        anchor_name=anchor,
+        city=city,
+        radius_meters=max_segment_distance,
+        limit=12,
+        keywords=state.get("interests", []),
+    )
+    candidate = next((poi for poi in nearby if poi["name"] not in excluded), None)
+
+    if candidate is None:
+        event_log, emitted_events = _append_event(
+            state,
+            BusinessEvent(
+                event="fallback_spot_failed",
+                payload={
+                    "anchor_location": anchor,
+                    "reason": "no_nearby_candidate_within_budget",
+                    "max_segment_distance_meters": max_segment_distance,
+                },
+            ),
+        )
+        return {
+            "distance_guard_exhausted": True,
+            "fallback_attempted": True,
+            "event_log": event_log,
+            "emitted_events": emitted_events,
+        }
+
+    item = ItineraryItem(
+        id=f"spot-fallback-{slugify(candidate['name'])}-{sequence}",
+        name=candidate["name"],
+        kind=ItineraryItemKind.SPOT,
+        sequence=sequence,
+        anchor_segment=anchor,
+        distance_from_previous_meters=0,
+        cumulative_distance_meters=state["cumulative_distance_meters"],
+        reason="Fallback nearby POI selected after repeated long-distance rejections.",
+        confirmed=True,
+        location_coords=candidate.get("location_coords"),
+    )
+    itinerary.append(item.model_dump())
+    event_log, emitted_events = _append_event(
+        state,
+        BusinessEvent(
+            event="fallback_spot_selected",
+            payload={
+                "item": item.model_dump(),
+                "anchor_location": anchor,
+                "candidate_distance_meters": candidate["distance_meters"],
+                "max_segment_distance_meters": max_segment_distance,
+            },
+        ),
+    )
+    return {
+        "itinerary_items": itinerary,
+        "replan_required": False,
+        "distance_replan_count": 0,
+        "distance_guard_exhausted": False,
+        "fallback_attempted": True,
         "event_log": event_log,
         "emitted_events": emitted_events,
     }
@@ -314,7 +649,7 @@ def summary_builder_node(state: TravelState) -> dict[str, Any]:
         mode=PlanningMode(state["mode"]),
         origin=state["origin"],
         destination=state["destination"],
-        total_distance_meters=state["cumulative_distance_meters"],
+        total_distance_meters=state["total_distance_meters"],
         fatigue_threshold_meters=state["fatigue_threshold_meters"],
         rest_stop_count=sum(
             1 for item in state["itinerary_items"] if item["kind"] == ItineraryItemKind.REST_STOP.value
@@ -336,6 +671,12 @@ def summary_builder_node(state: TravelState) -> dict[str, Any]:
 
 
 def route_from_fatigue(state: TravelState) -> str:
+    if state.get("distance_guard_exhausted", False):
+        return "summary_builder"
+
+    if state.get("replan_required", False):
+        return "planner"
+
     # Check for infinite loop protection - max 5 rest stops
     rest_stop_count = state.get("rest_stop_count", 0)
     if rest_stop_count >= 5:
@@ -355,16 +696,48 @@ def route_from_fatigue(state: TravelState) -> str:
     return "planner"
 
 
+def route_from_distance(state: TravelState) -> str:
+    if state.get("pending_destination_item"):
+        return "mid_segment_rest"
+    if state.get("distance_guard_exhausted", False):
+        if (
+            state["mode"] == PlanningMode.LOCAL_EXPLORE.value
+            and not state.get("fallback_attempted", False)
+            and _spot_count(state) < state["max_spots"]
+        ):
+            return "fallback_local_spot"
+        return "summary_builder"
+    if state.get("replan_required", False):
+        return "planner"
+    return "fatigue_router"
+
+
 workflow = StateGraph(TravelState)
 workflow.add_node("planner", planner_node)
 workflow.add_node("distance_calculator", distance_calculator_node)
 workflow.add_node("fatigue_router", fatigue_router_node)
 workflow.add_node("rest_stop_finder", rest_stop_finder_node)
+workflow.add_node("mid_segment_rest", mid_segment_rest_node)
+workflow.add_node("complete_pending_segment", complete_pending_segment_node)
+workflow.add_node("fallback_local_spot", fallback_local_spot_node)
 workflow.add_node("summary_builder", summary_builder_node)
 
 workflow.set_entry_point("planner")
 workflow.add_edge("planner", "distance_calculator")
-workflow.add_edge("distance_calculator", "fatigue_router")
+workflow.add_conditional_edges(
+    "distance_calculator",
+    route_from_distance,
+    {
+        "planner": "planner",
+        "fatigue_router": "fatigue_router",
+        "mid_segment_rest": "mid_segment_rest",
+        "fallback_local_spot": "fallback_local_spot",
+        "summary_builder": "summary_builder",
+    },
+)
+workflow.add_edge("mid_segment_rest", "complete_pending_segment")
+workflow.add_edge("complete_pending_segment", "fatigue_router")
+workflow.add_edge("fallback_local_spot", "distance_calculator")
 workflow.add_conditional_edges(
     "fatigue_router",
     route_from_fatigue,

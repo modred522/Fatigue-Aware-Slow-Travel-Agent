@@ -468,6 +468,58 @@
   min-height: 220px;
 }
 
+.map-card {
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
+}
+
+.map-panel-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.map-panel-header p {
+  margin: 8px 0 0;
+  color: var(--text-soft);
+  line-height: 1.5;
+}
+
+.map-status-chip {
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  background: rgba(31, 143, 122, 0.10);
+  color: var(--accent-strong);
+}
+
+.map-canvas {
+  min-height: 250px;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(93, 77, 58, 0.10);
+  background: linear-gradient(180deg, rgba(244, 248, 245, 0.95), rgba(236, 242, 236, 0.9));
+}
+
+.map-canvas.hidden {
+  display: none;
+}
+
+.map-marker-label {
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: rgba(31, 26, 23, 0.86);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  box-shadow: 0 10px 24px rgba(31, 26, 23, 0.16);
+}
+
 .fatigue-stats {
   display: flex;
   justify-content: space-between;
@@ -483,6 +535,125 @@
   background: rgba(255, 255, 255, 0.62);
   border: 1px solid rgba(93, 77, 58, 0.10);
   font-weight: 700;
+}
+
+.fatigue-card {
+  min-height: 220px;
+}
+
+.fatigue-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.fatigue-header p {
+  margin: 8px 0 0;
+  color: var(--text-soft);
+  line-height: 1.5;
+}
+
+.fatigue-legend {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.legend-chip {
+  padding: 8px 10px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  border: 1px solid rgba(93, 77, 58, 0.10);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.legend-chip.threshold {
+  color: #a1492b;
+  background: rgba(223, 159, 61, 0.14);
+}
+
+.legend-chip.route {
+  color: var(--accent-strong);
+  background: rgba(31, 143, 122, 0.12);
+}
+
+.fatigue-chart-shell {
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(93, 77, 58, 0.10);
+}
+
+.fatigue-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.fatigue-threshold-line {
+  stroke: rgba(177, 73, 43, 0.75);
+  stroke-width: 2;
+  stroke-dasharray: 7 7;
+}
+
+.fatigue-route-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.fatigue-point {
+  stroke: rgba(255, 255, 255, 0.92);
+  stroke-width: 2;
+}
+
+.point-start,
+.point-origin {
+  fill: #7b5319;
+}
+
+.point-spot,
+.point-waypoint,
+.point-destination {
+  fill: var(--accent);
+}
+
+.point-rest_stop {
+  fill: var(--gold);
+}
+
+.point-reset {
+  fill: #c85b43;
+}
+
+.fatigue-x-axis {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.fatigue-axis-label {
+  text-align: center;
+}
+
+.fatigue-axis-label span {
+  font-size: 0.72rem;
+  color: var(--text-soft);
+}
+
+.fatigue-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 14px;
 }
 
 .error-banner {

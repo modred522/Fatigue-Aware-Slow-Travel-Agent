@@ -52,6 +52,14 @@ function labelForEvent(event: string, lang: Lang) {
       return t(lang, 'candidateReady')
     case 'candidate_generated':
       return t(lang, 'candidateGenerated')
+    case 'itinerary_item_rejected':
+      return 'Candidate Rejected'
+    case 'fallback_spot_selected':
+      return 'Fallback Spot'
+    case 'fallback_spot_failed':
+      return 'Fallback Failed'
+    case 'mid_segment_rest_required':
+      return 'Midway Rest'
     default:
       return event
   }
@@ -63,26 +71,39 @@ function describeEvent(event: StreamEvent) {
   }
   if (event.event === 'itinerary_item_added') {
     const item = event.payload.item as { name?: string; reason?: string } | undefined
-    return `${item?.name ?? 'Unknown'} · ${item?.reason ?? ''}`.trim()
+    return `${item?.name ?? 'Unknown'} | ${item?.reason ?? ''}`.trim()
   }
   if (event.event === 'segment_distance_updated') {
-    return `${String(event.payload.from)} → ${String(event.payload.to)} · ${String(event.payload.segment_distance_meters)} m`
+    return `${String(event.payload.from)} -> ${String(event.payload.to)} | ${String(event.payload.segment_distance_meters)} m`
   }
   if (event.event === 'fatigue_status_updated') {
-    return `cumulative=${String(event.payload.cumulative_distance_meters)} m · threshold=${String(event.payload.fatigue_threshold_meters)} m`
+    return `cumulative=${String(event.payload.cumulative_distance_meters)} m | threshold=${String(event.payload.fatigue_threshold_meters)} m`
   }
   if (event.event === 'rest_stop_added') {
     const item = event.payload.item as { name?: string; reason?: string } | undefined
-    return `${item?.name ?? 'Unknown'} · ${item?.reason ?? ''}`.trim()
+    return `${item?.name ?? 'Unknown'} | ${item?.reason ?? ''}`.trim()
   }
   if (event.event === 'planning_completed') {
-    return `${String(event.payload.total_distance_meters)} m · ${String(event.payload.rest_stop_count)} rest stops`
+    return `${String(event.payload.total_distance_meters)} m | ${String(event.payload.rest_stop_count)} rest stops`
   }
   if (event.event === 'candidate_set_ready') {
     return String(event.payload.description ?? '')
   }
   if (event.event === 'candidate_generated') {
-    return `${String(event.payload.name)} · ${String(event.payload.role)}`
+    return `${String(event.payload.name)} | ${String(event.payload.role)}`
+  }
+  if (event.event === 'itinerary_item_rejected') {
+    return `${String(event.payload.name)} | ${String(event.payload.segment_distance_meters)} m > ${String(event.payload.max_segment_distance_meters)} m`
+  }
+  if (event.event === 'fallback_spot_selected') {
+    const item = event.payload.item as { name?: string } | undefined
+    return `${item?.name ?? 'Unknown'} | fallback nearby POI selected`
+  }
+  if (event.event === 'fallback_spot_failed') {
+    return `No nearby fallback POI within ${String(event.payload.max_segment_distance_meters)} m`
+  }
+  if (event.event === 'mid_segment_rest_required') {
+    return `${String(event.payload.from)} -> ${String(event.payload.to)} | ${String(event.payload.segment_distance_meters)} m needs a midway rest`
   }
   return JSON.stringify(event.payload)
 }

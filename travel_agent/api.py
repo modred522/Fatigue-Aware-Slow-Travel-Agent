@@ -62,6 +62,15 @@ async def get_settings():
     }
 
 
+@api.get("/api/settings/map")
+async def get_map_settings():
+    config = refresh_config()
+    return {
+        "amap_api_key": config.amap_api_key,
+        "amap_api_key_set": bool(config.amap_api_key),
+    }
+
+
 @api.post("/api/settings")
 async def update_settings(payload: SettingsPayload):
     updated: list[str] = []

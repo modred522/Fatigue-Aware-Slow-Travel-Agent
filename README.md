@@ -1,79 +1,123 @@
 # Fatigue-Aware Slow Travel Agent
 
-An AI-powered travel planning app for slow travel with fatigue-aware routing. It supports:
+A dual-mode travel planning app for slow travel. The system combines an LLM, AMap routing/geocoding, a LangGraph workflow, and a React dashboard to generate itineraries that respect fatigue thresholds, insert rest stops, and stream planning progress in real time.
 
-- **Dual Planning Modes**:
-  - `Local Explore`: plan nearby places around a single anchor location
-  - `Origin to Destination`: generate waypoint candidates first, confirm them, then plan a fatigue-aware route
-- **Location Validation**: Verify locations exist within specified cities before planning
-- **Multiple Transport Modes**: Walking, public transit, and driving with automatic fallback
-- **Fatigue-Aware Routing**: Automatically inserts rest stops when fatigue threshold is exceeded, continues planning until all waypoints are visited
-- **Real-time Updates**: Planning events streamed to frontend via Server-Sent Events
-- **Flexible LLM Support**: OpenAI-compatible providers including Qwen, Kimi, and others
-- **Real distances and times** via AMap (高德地图) API
+## What It Does
+
+- `Local Explore`
+  Around one anchor location, recommend nearby POIs and build a slow-travel itinerary.
+- `Origin to Destination`
+  Generate waypoint candidates first, let the user confirm them, then plan the full route.
+- `Fatigue-aware routing`
+  Track continuous walking distance, insert rest stops when fatigue exceeds the threshold, and support explicit midway rest on long but still reachable segments.
+- `Map dashboard`
+  Render itinerary markers and route lines on an AMap panel.
+- `Fatigue curve`
+  Visualize fatigue buildup, peaks, and reset points from the generated itinerary.
+- `OpenAI-compatible LLM providers`
+  Supports Qwen, Kimi, and any provider exposing compatible `chat.completions` plus model listing.
+
+## Current Product Shape
+
+### 1. Local Explore
+
+Input:
+
+- city
+- destination / anchor location
+- interests
+- fatigue threshold
+- max spots
+- transport mode
+
+Behavior:
+
+- The planner recommends nearby POIs around the anchor.
+- Distances are validated with AMap, not trusted from the LLM.
+- If a POI is too far away, the workflow rejects it and replans.
+- If a segment is longer than one fatigue threshold but still reachable within two thresholds, the workflow inserts a real midway rest stop and then completes the remaining segment.
+- If repeated LLM recommendations are unusable, the workflow falls back to a nearby POI discovered from AMap.
+
+### 2. Origin to Destination
+
+Input:
+
+- city
+- origin
+- destination
+- interests
+- fatigue threshold
+- max spots
+- transport mode
+
+Behavior:
+
+- `/api/plans/candidates` generates 3-5 waypoint candidates.
+- The user confirms selected candidates in the frontend.
+- `/api/plans/stream` plans the final itinerary using the confirmed waypoints.
 
 ## Tech Stack
 
 | Layer | Technology |
-|-------|------------|
+| --- | --- |
 | Frontend | React 19, TypeScript, Vite |
 | Backend | FastAPI, Uvicorn |
-| Agent Workflow | LangGraph |
-| LLM | OpenAI-compatible chat API |
-| Map API | AMap |
+| Workflow | LangGraph |
+| Map / Geocoding | AMap Web Service + AMap JS SDK |
+| LLM | OpenAI-compatible provider |
 | Streaming | Server-Sent Events |
 
 ## Project Structure
 
 ```text
 .
-├── api.py                 # Legacy FastAPI entry point
-├── agent.py               # Legacy agent implementation
-├── tools.py               # Legacy tools
-├── travel_agent/          # Main package
-│   ├── api.py             # FastAPI application
-│   ├── config.py          # Configuration management
-│   ├── errors.py          # Custom exceptions
-│   ├── logger.py          # Logging utilities
-│   ├── prompts.py         # LLM prompts
-│   ├── schemas.py         # Pydantic models
-│   ├── workflow.py        # LangGraph workflow
-│   └── services/
-│       ├── amap.py        # AMap API client
-│       ├── llm.py         # LLM service with multi-provider support
-│       └── settings.py    # Settings management
-├── frontend/              # React + TypeScript frontend
-│   └── src/
-│       ├── components/    # React components
-│       ├── lib/           # API clients and utilities
-│       ├── i18n.ts        # Internationalization
-│       └── types.ts       # TypeScript types
-├── tests/                 # Unit tests
-└── logs/                  # Application logs
+|-- travel_agent/
+|   |-- api.py
+|   |-- config.py
+|   |-- errors.py
+|   |-- logger.py
+|   |-- prompts.py
+|   |-- schemas.py
+|   |-- workflow.py
+|   `-- services/
+|       |-- amap.py
+|       `-- llm.py
+|-- frontend/
+|   |-- src/
+|   |   |-- components/
+|   |   |-- lib/
+|   |   |-- i18n.ts
+|   |   `-- types.ts
+|   `-- package.json
+|-- tests/
+|-- requirements.txt
+|-- .env.example
+`-- README.md
 ```
 
-## Prerequisites
+## Requirements
 
 - Python 3.10+
 - Node.js 18+
+- `uv`
 - AMap API key
-- An OpenAI-compatible LLM provider:
-  - Qwen / DashScope
-  - Kimi / Moonshot
-  - any other provider exposing OpenAI-compatible `chat.completions` and `models.list`
+- An OpenAI-compatible LLM API key
 
 ## Configuration
 
-Create `.env` in the project root:
+Create a `.env` file in the project root.
+
+Example:
 
 ```env
-AMAP_API_KEY=your_amap_api_key_here
-LLM_API_KEY=your_openai_compatible_api_key_here
+AMAP_API_KEY=your_amap_key
+LLM_API_KEY=your_provider_key
 LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 LLM_MODEL=qwen-turbo
+LLM_TEMPERATURE=0.3
 ```
 
-Examples:
+Example provider settings:
 
 - Qwen / DashScope
   - `LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1`
@@ -82,194 +126,136 @@ Examples:
   - `LLM_BASE_URL=https://api.moonshot.cn/v1`
   - `LLM_MODEL=kimi-k2-0711-preview`
 
-You can also configure these values in the web UI:
+You can also configure all of these in the web UI:
 
 - AMap API key
 - LLM API key
 - LLM base URL
-- fetch model list from provider
-- select one available model
-- temperature (0-2, Kimi models fixed at 1)
+- fetch model list
+- select model
+- temperature
 
-## Getting Started
+## Installation
 
-### 1. Install dependencies
+### Backend
 
 ```bash
-git clone <repository-url>
-cd project-repo
-
 uv venv
 uv pip install -r requirements.txt
+```
 
+### Frontend
+
+```bash
 cd frontend
 npm install
 cd ..
 ```
 
-### 2. Run development servers
+## Run Locally
 
-Backend:
+### Backend
 
 ```bash
-uv run uvicorn api:api --reload --host 0.0.0.0 --port 8000
+uv run uvicorn travel_agent.api:api --reload --host 127.0.0.1 --port 8000
 ```
 
-Frontend:
+### Frontend
 
 ```bash
 cd frontend
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173).
+Frontend default URL:
 
-## Usage
+- [http://localhost:5173](http://localhost:5173)
 
-1. Open `Settings`
-2. Enter:
-   - AMap API key
-   - LLM API key
-   - LLM Base URL
-3. Click `Fetch Models`
-4. Choose one available model
-5. Set temperature (optional, 0-2)
-6. Pick a planning mode:
-   - `Local Explore`
-   - `Origin to Destination`
+Backend default URL:
 
-### Local Explore
+- [http://127.0.0.1:8000](http://127.0.0.1:8000)
 
-- enter city (e.g., "杭州") and location (e.g., "西湖")
-- validate the location exists in the specified city
-- optionally enter interests, threshold, duration, max spots
-- select transport mode (walking, transit, or driving)
-- start planning directly
+## Dashboard Features
 
-### Origin to Destination
+The current frontend includes:
 
-- enter city, origin and destination
-- generate waypoint candidates
-- confirm selected waypoint candidates
-- select transport mode
-- start planning
-
-The dashboard shows:
-
-- planning timeline
+- dual-mode planning form
+- candidate confirmation flow
+- streaming planning timeline
 - structured itinerary summary
-- placeholder panels for map and fatigue visualization
+- fatigue curve panel
+- live AMap panel with itinerary markers and route line
 
-### Transport Modes
+Map notes:
 
-- **Walking**: Real walking distance and time, with automatic fallback to driving for long distances
-- **Transit**: Public transportation routes (bus/subway)
-- **Driving**: Car/motorcycle routes
+- The map panel uses the browser-side AMap JS SDK.
+- The frontend reads the AMap key from `/api/settings/map`.
+- If the key is missing, the map panel stays disabled and shows a hint.
 
-### Fatigue-Aware Planning
+## Workflow Notes
 
-The system tracks cumulative travel distance and automatically inserts rest stops when the fatigue threshold is exceeded. Planning continues after rest stops until all waypoints are visited.
+The planning workflow is centered in `travel_agent/workflow.py`.
 
-## API Reference
+Key behaviors:
+
+- LLM suggestions are always validated by AMap route distance.
+- Fatigue threshold controls continuous walking, not total trip distance.
+- Neighboring POIs are allowed to be farther than one threshold if the route can be completed with one rest stop in between.
+- Long-but-reachable segments are split into:
+  1. midpoint rest stop
+  2. remaining segment to the destination POI
+- Repeated unusable local recommendations can fall back to nearby AMap-discovered POIs.
+
+## API Overview
 
 ### `GET /api/settings`
 
-Returns current runtime settings with masked secrets.
+Returns runtime settings with masked secrets.
 
-### `POST /api/settings`
+### `GET /api/settings/map`
 
-Update runtime settings.
-
-```json
-{
-  "amap_api_key": "your_key",
-  "llm_api_key": "your_llm_key",
-  "llm_base_url": "https://api.moonshot.cn/v1",
-  "llm_model": "kimi-k2-0711-preview",
-  "llm_temperature": "1.0"
-}
-```
-
-### `POST /api/settings/models`
-
-Fetch models from an OpenAI-compatible provider.
-
-```json
-{
-  "llm_api_key": "your_llm_key",
-  "llm_base_url": "https://api.moonshot.cn/v1"
-}
-```
-
-### `POST /api/plans/candidates`
-
-Generate waypoint candidates for `point_to_point` mode.
-
-```json
-{
-  "mode": "point_to_point",
-  "origin": "Shanghai",
-  "destination": "Suzhou",
-  "interests": ["gardens", "cafes"],
-  "trip_duration_days": 1
-}
-```
-
-### `POST /api/validate-location`
-
-Validate that a location exists within a specific city.
-
-```json
-{
-  "city": "杭州",
-  "location": "西湖"
-}
-```
+Returns AMap map settings for the frontend map panel.
 
 Response:
 
 ```json
 {
-  "valid": true,
-  "formatted_address": "浙江省杭州市西湖区西湖风景区"
+  "amap_api_key": "your_amap_key",
+  "amap_api_key_set": true
 }
 ```
+
+### `POST /api/settings`
+
+Update runtime settings.
+
+### `POST /api/settings/models`
+
+Fetch available models from the configured OpenAI-compatible provider.
+
+### `POST /api/validate-location`
+
+Validate that a location exists in the specified city.
+
+### `POST /api/plans/candidates`
+
+Generate waypoint candidates for `point_to_point`.
 
 ### `POST /api/plans/stream`
 
-Start planning and receive SSE business events.
+Run itinerary planning and consume streamed business events.
 
-```json
-{
-  "mode": "point_to_point",
-  "city": "杭州",
-  "origin": "杭州东站",
-  "destination": "西湖",
-  "trip_duration_days": 1,
-  "interests": ["gardens", "cafes"],
-  "fatigue_threshold_meters": 3000,
-  "max_spots": 3,
-  "transport_mode": "walking",
-  "selected_waypoints": [
-    {
-      "id": "candidate-zhouzhuang-1",
-      "name": "Zhouzhuang",
-      "reason": "classic canal town stop",
-      "role": "scenic detour"
-    }
-  ]
-}
-```
-
-Transport modes: `walking`, `transit`, `driving`
-
-SSE event types:
+Important SSE events:
 
 - `planning_started`
+- `candidate_generated`
+- `candidate_set_ready`
 - `itinerary_item_added`
 - `segment_distance_updated`
+- `mid_segment_rest_required`
 - `fatigue_status_updated`
 - `rest_stop_added`
+- `fallback_spot_selected`
 - `planning_completed`
 - `error`
 
@@ -285,5 +271,20 @@ npx tsc -b
 Backend unit tests:
 
 ```bash
-.venv\Scripts\python.exe -m unittest tests.test_llm_service tests.test_settings_api
+.venv\Scripts\python.exe -m unittest tests.test_settings_api tests.test_llm_service tests.test_workflow_distance_guard
 ```
+
+## Known Limitations
+
+- The map panel currently draws a straight polyline between itinerary points, not a true AMap navigation polyline.
+- The fatigue curve is derived from itinerary data; it is not yet a backend-generated analytics object.
+- No database is used yet. Settings and plans are runtime-only.
+- Candidate quality still depends on provider/model quality even though routing validation and fallback logic are in place.
+
+## Next Recommended Improvements
+
+- true route polyline rendering from AMap path results
+- marker-to-itinerary hover/highlight linkage
+- richer map popups with segment distance and reason
+- backend-produced fatigue analytics object instead of frontend-only derivation
+- persistent storage for settings, plans, and session history

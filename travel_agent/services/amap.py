@@ -152,6 +152,65 @@ class AMapClient:
         log_route(origin_name, destination_name, city, mode, result.get("distance_meters"))
         return result
 
+    def nearby_pois(
+        self,
+        anchor_name: str,
+        city: str,
+        radius_meters: int,
+        limit: int = 10,
+        keywords: list[str] | None = None,
+    ) -> list[dict]:
+        """Find nearby POIs around anchor location, sorted by distance."""
+        anchor_coords = self.geocode(anchor_name, city)
+        return self.nearby_pois_by_location(
+            location_coords=anchor_coords,
+            city=city,
+            radius_meters=radius_meters,
+            limit=limit,
+            keywords=keywords,
+        )
+
+    def nearby_pois_by_location(
+        self,
+        location_coords: str,
+        city: str,
+        radius_meters: int,
+        limit: int = 10,
+        keywords: list[str] | None = None,
+    ) -> list[dict]:
+        """Find nearby POIs around a coordinate, sorted by distance."""
+        params = {
+            "key": self.api_key,
+            "location": location_coords,
+            "radius": max(200, min(radius_meters, 50000)),
+            "sortrule": "distance",
+            "offset": max(1, min(limit, 25)),
+            "page": 1,
+            "extensions": "base",
+            "city": city,
+            "citylimit": "true",
+        }
+        if keywords:
+            params["keywords"] = "|".join([k.strip() for k in keywords if k.strip()][:4])
+
+        data = self._get("/place/around", params)
+        pois = data.get("pois") or []
+        results: list[dict] = []
+        for poi in pois:
+            try:
+                distance_value = int(poi.get("distance", 0))
+            except (TypeError, ValueError):
+                distance_value = 0
+            results.append(
+                {
+                    "name": poi.get("name", "").strip(),
+                    "address": poi.get("address", "").strip(),
+                    "distance_meters": distance_value,
+                    "location_coords": poi.get("location", "").strip() or None,
+                }
+            )
+        return [item for item in results if item["name"]]
+
     def _route_with_coords(
         self,
         origin_coords: str,

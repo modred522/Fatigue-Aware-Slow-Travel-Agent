@@ -119,6 +119,7 @@ class ItineraryItem(BaseModel):
     reason: str
     confirmed: bool = False
     transport_mode: TransportMode = Field(default=TransportMode.WALKING)
+    location_coords: str | None = None
 
 
 class TravelSummary(BaseModel):

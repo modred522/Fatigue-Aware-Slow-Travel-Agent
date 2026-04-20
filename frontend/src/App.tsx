@@ -2,7 +2,9 @@ import { useMemo, useRef, useState } from 'react'
 
 import DestinationInput from './components/DestinationInput'
 import ErrorBanner from './components/ErrorBanner'
+import FatigueCurve from './components/FatigueCurve'
 import ItinerarySummary from './components/ItinerarySummary'
+import MapPanel from './components/MapPanel'
 import Settings from './components/Settings'
 import StepTimeline from './components/StepTimeline'
 import type { Lang } from './i18n'
@@ -99,7 +101,7 @@ function App() {
         })),
         {
           event: 'candidate_set_ready',
-          payload: { description: `${t(lang, 'candidateReady')} · ${t(lang, 'candidateReadyDesc')}` },
+          payload: { description: `${t(lang, 'candidateReady')} | ${t(lang, 'candidateReadyDesc')}` },
         },
       ])
       setStatus('candidate_ready')
@@ -185,7 +187,7 @@ function App() {
           <div className="hero-actions">
             <div className="lang-switch">
               <button className={lang === 'zh' ? 'active' : ''} onClick={() => setLang('zh')} type="button">
-                中
+                ZH
               </button>
               <button className={lang === 'en' ? 'active' : ''} onClick={() => setLang('en')} type="button">
                 EN
@@ -240,20 +242,8 @@ function App() {
           <ItinerarySummary summary={summary} lang={lang} />
 
           <section className="dashboard-grid">
-            <article className="panel-card placeholder-card">
-              <p className="eyebrow">{t(lang, 'dashboard')}</p>
-              <h2>{t(lang, 'mapPlaceholder')}</h2>
-              <p>{t(lang, 'mapPlaceholderDesc')}</p>
-            </article>
-            <article className="panel-card placeholder-card">
-              <p className="eyebrow">{t(lang, 'dashboard')}</p>
-              <h2>{t(lang, 'fatiguePanel')}</h2>
-              <p>{t(lang, 'fatiguePanelDesc')}</p>
-              <div className="fatigue-stats">
-                <span>{form.fatigueThresholdMeters} m</span>
-                <span>{summary?.total_distance_meters ?? 0} m</span>
-              </div>
-            </article>
+            <MapPanel summary={summary} lang={lang} />
+            <FatigueCurve summary={summary} thresholdMeters={form.fatigueThresholdMeters} lang={lang} />
           </section>
         </div>
       </main>
